@@ -1,0 +1,24 @@
+.env
+
+# Flutter
+flutter_app/.dart_tool/
+flutter_app/.idea/
+flutter_app/build/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+
+# Claude Code
+.claude/scheduled_tasks.lock
+
+# Word lock files
+~$*
+
+# Editor
+.vscode/
+
+# Reports and report assets (kept local, not published)
+*.docx
+report_diagrams/
+
+# Firebase CLI cache
+flutter_app/.firebase/

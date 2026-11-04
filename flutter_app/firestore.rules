@@ -1,0 +1,176 @@
+rules_version = '2';
+
+// Server-side enforcement for AutoPartsLink. These replace the Django REST
+// permission classes and serializer validation: the app checks the same
+// rules client-side for friendly error messages, but these are the ones
+// that can't be bypassed.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() { return signedIn() && me().isActive == true; }
+    function isAdmin() { return active() && me().role == 'ADMIN'; }
+    function isCustomer() { return active() && me().role == 'CUSTOMER'; }
+    function isSupplier() { return active() && me().role == 'SUPPLIER'; }
+    function isApprovedSupplier() { return isSupplier() && me().isApproved == true; }
+
+    function changedKeys() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function onlyChanges(keys) { return changedKeys().hasOnly(keys); }
+
+    function requestDoc(id) { return get(/databases/$(database)/documents/procurementRequests/$(id)).data; }
+    function openStatuses() { return ['OPEN', 'QUOTATIONS_RECEIVED']; }
+
+    // ---------- users/{uid}: private account record ----------
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+
+      // Self-registration only as CUSTOMER or SUPPLIER; suppliers start unapproved.
+      // Admins are promoted by hand in the Firebase console (see README).
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role in ['CUSTOMER', 'SUPPLIER']
+        && request.resource.data.isApproved == (request.resource.data.role != 'SUPPLIER')
+        && request.resource.data.isActive == true;
+
+      allow update: if
+        // users edit their own details, but never their role/approval/activation
+        (request.auth.uid == uid && active()
+          && !changedKeys().hasAny(['role', 'isApproved', 'isActive', 'email', 'createdAt']))
+        // admins approve suppliers and (de)activate accounts
+        || (isAdmin() && onlyChanges(['isApproved', 'isActive']));
+    }
+
+    // ---------- suppliers/{uid}: public directory / business profile ----------
+    match /suppliers/{uid} {
+      allow read: if active();
+
+      allow create: if signedIn() && request.auth.uid == uid
+        && getAfter(/databases/$(database)/documents/users/$(uid)).data.role == 'SUPPLIER'
+        && request.resource.data.isApproved == false
+        && request.resource.data.isVerified == false;
+
+      allow update: if
+        (request.auth.uid == uid && active()
+          && !changedKeys().hasAny(['isApproved', 'isVerified', 'createdAt']))
+        || (isAdmin() && onlyChanges(['isApproved', 'isVerified', 'updatedAt']));
+    }
+
+    // ---------- procurementRequests/{requestId} ----------
+    match /procurementRequests/{requestId} {
+      function isOwner() { return isCustomer() && resource.data.customerId == request.auth.uid; }
+
+      allow read: if isAdmin() || isSupplier() || isOwner();
+
+      allow create: if isCustomer()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.status == 'OPEN'
+        && request.resource.data.items.size() > 0;
+
+      allow update: if isAdmin()
+        // owner edits details while no quotation has been accepted yet
+        || (isOwner() && resource.data.status in ['SUBMITTED', 'OPEN']
+            && !changedKeys().hasAny(['customerId', 'status', 'createdAt']))
+        // owner accepting a quotation
+        || (isOwner() && onlyChanges(['status', 'updatedAt'])
+            && resource.data.status in openStatuses()
+            && request.resource.data.status == 'ORDER_CREATED')
+        // a supplier's first quotation moves OPEN -> QUOTATIONS_RECEIVED
+        || (isApprovedSupplier() && onlyChanges(['status', 'updatedAt'])
+            && resource.data.status == 'OPEN'
+            && request.resource.data.status == 'QUOTATIONS_RECEIVED')
+        // the order's supplier completing it completes the request too
+        || (isSupplier() && onlyChanges(['status', 'updatedAt'])
+            && request.resource.data.status == 'COMPLETED'
+            && getAfter(/databases/$(database)/documents/orders/$(requestId + '_' + request.auth.uid)).data.status == 'COMPLETED');
+
+      allow delete: if isAdmin() || (isOwner() && resource.data.status in ['SUBMITTED', 'OPEN']);
+    }
+
+    // ---------- quotations/{requestId}_{supplierUid} ----------
+    match /quotations/{quotationId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.supplierId == request.auth.uid)
+        || (signedIn() && resource.data.customerId == request.auth.uid);
+
+      // The deterministic ID means a second quotation from the same supplier
+      // is an update, which the rules below don't allow: one per request.
+      allow create: if isApprovedSupplier()
+        && quotationId == request.resource.data.requestId + '_' + request.auth.uid
+        && request.resource.data.supplierId == request.auth.uid
+        && request.resource.data.status == 'SUBMITTED'
+        && request.resource.data.items.size() > 0
+        && requestDoc(request.resource.data.requestId).status in openStatuses()
+        && request.resource.data.customerId == requestDoc(request.resource.data.requestId).customerId;
+
+      allow update: if isAdmin()
+        // supplier edits or withdraws while still SUBMITTED
+        || (isApprovedSupplier() && resource.data.supplierId == request.auth.uid
+            && resource.data.status == 'SUBMITTED'
+            && request.resource.data.status in ['SUBMITTED', 'WITHDRAWN']
+            && !changedKeys().hasAny(['requestId', 'supplierId', 'customerId', 'createdAt']))
+        // customer accepts (only together with creating the order) or rejects
+        || (isCustomer() && resource.data.customerId == request.auth.uid
+            && resource.data.status == 'SUBMITTED'
+            && onlyChanges(['status', 'updatedAt'])
+            && (request.resource.data.status == 'REJECTED'
+                || (request.resource.data.status == 'ACCEPTED'
+                    && existsAfter(/databases/$(database)/documents/orders/$(quotationId)))));
+    }
+
+    // ---------- orders/{quotationId} ----------
+    match /orders/{orderId} {
+      function quotation() { return get(/databases/$(database)/documents/quotations/$(orderId)).data; }
+
+      allow read: if isAdmin()
+        || (signedIn() && (resource.data.customerId == request.auth.uid || resource.data.supplierId == request.auth.uid));
+
+      allow create: if isCustomer()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.quotationId == orderId
+        && request.resource.data.status == 'ORDER_PLACED'
+        && quotation().customerId == request.auth.uid
+        && quotation().status == 'SUBMITTED'
+        && request.resource.data.supplierId == quotation().supplierId
+        && request.resource.data.requestId == quotation().requestId
+        && request.resource.data.items == quotation().items
+        && getAfter(/databases/$(database)/documents/quotations/$(orderId)).data.status == 'ACCEPTED';
+
+      // Only the order's supplier (or an admin) moves it along, never out of a
+      // final state, and every change appends exactly one history entry.
+      allow update: if (isAdmin() || (isSupplier() && resource.data.supplierId == request.auth.uid))
+        && !(resource.data.status in ['COMPLETED', 'CANCELLED'])
+        && request.resource.data.status != resource.data.status
+        && onlyChanges(['status', 'statusHistory', 'updatedAt'])
+        && request.resource.data.statusHistory.size() == resource.data.statusHistory.size() + 1;
+    }
+
+    // ---------- ratings/{orderId}: one per completed order ----------
+    match /ratings/{orderId} {
+      function order() { return get(/databases/$(database)/documents/orders/$(orderId)).data; }
+
+      allow read: if active();
+
+      allow create: if isCustomer()
+        && request.resource.data.orderId == orderId
+        && request.resource.data.customerId == request.auth.uid
+        && order().customerId == request.auth.uid
+        && order().status == 'COMPLETED'
+        && request.resource.data.supplierId == order().supplierId
+        && request.resource.data.score is int
+        && request.resource.data.score >= 1 && request.resource.data.score <= 5;
+    }
+
+    // ---------- notifications/{id} ----------
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.recipientId == request.auth.uid;
+
+      allow create: if signedIn()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.recipientId is string
+        && request.resource.data.isRead == false;
+
+      allow update: if signedIn() && resource.data.recipientId == request.auth.uid && onlyChanges(['isRead']);
+    }
+  }
+}

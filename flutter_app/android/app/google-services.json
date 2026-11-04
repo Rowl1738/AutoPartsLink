@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1098935917212",
+    "project_id": "autopartslink-c896d",
+    "storage_bucket": "autopartslink-c896d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1098935917212:android:ab590e6082c55649cdab59",
+        "android_client_info": {
+          "package_name": "com.autopartslink.autopartslink"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyATL4qoFLf_H2wUGZYDoL8Ih9kIKdyc28U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
