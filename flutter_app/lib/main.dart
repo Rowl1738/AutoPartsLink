@@ -10,6 +10,7 @@ import 'providers/notification_provider.dart';
 import 'providers/order_provider.dart';
 import 'providers/procurement_provider.dart';
 import 'providers/quotation_provider.dart';
+import 'providers/reports_provider.dart';
 import 'providers/supplier_provider.dart';
 import 'routing/app_router.dart';
 import 'routing/route_names.dart';
@@ -33,6 +34,7 @@ class AutoPartsLinkApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => OrderProvider()),
         ChangeNotifierProvider(create: (_) => SupplierProvider()),
         ChangeNotifierProvider(create: (_) => AdminProvider()),
+        ChangeNotifierProvider(create: (_) => ReportsProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],
       child: MaterialApp(

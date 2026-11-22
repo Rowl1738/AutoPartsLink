@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../providers/auth_provider.dart';
-import '../../widgets/coming_soon_tile.dart';
 import '../../widgets/dashboard_header.dart';
 import '../../widgets/nav_tile.dart';
 import '../../widgets/section_label.dart';
@@ -10,6 +9,7 @@ import '../common/orders_list_screen.dart';
 import '../common/quotations_list_screen.dart';
 import '../common/requests_list_screen.dart';
 import 'manage_users_screen.dart';
+import 'reports_screen.dart';
 
 class AdminHome extends StatelessWidget {
   const AdminHome({super.key});
@@ -76,9 +76,12 @@ class AdminHome extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 const SectionLabel("Insights"),
-                const ComingSoonTile(
-                  icon: Icons.bar_chart_outlined, title: "Reports & Statistics", subtitle: "Platform activity at a glance",
+                NavTile(
+                  icon: Icons.bar_chart_outlined,
+                  title: "Reports & Statistics",
+                  subtitle: "Platform activity at a glance",
                   accent: AppColors.secondary,
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ReportsScreen())),
                 ),
               ],
             ),
